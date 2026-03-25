@@ -1,5 +1,6 @@
 import sys
 import mwpm
+import union_find
 
 
 # -----------------------------
@@ -18,7 +19,7 @@ def main():
     if (decoder_type == 1):
         mwpm.mwpm_test(test_type)
     if (decoder_type == 2):
-        return
+        union_find.union_find_test(test_type)
     if (decoder_type == 3):
         return
     if (decoder_type == 4):

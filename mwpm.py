@@ -10,7 +10,7 @@ import time
 
 # Default values (changed in tests)
 dist = 5
-per = 0.001
+per = 0.001     # 1/1000
 synd_rounds = 5
 shots = 1000000
 
@@ -48,67 +48,101 @@ def run_simulations(surface_code, shots):
 #       TEST FUNCTIONS
 # ---------------------------
 
-def correctness():
-    return None
-
-
-def latency():
-    for dist in range(3,10,2):
-        code = surface_code(dist, synd_rounds, per)
+# Plot decoder's conditional correctness as per increases
+# Conditional correctness: prediction correctness in cases with errors
+def correctness(depolarization = 0, measure = 0, reset = 0):
+    for i in range(1,11): # 0.0005 - 0.005
+        per = 5*i/10000
+        code = surface_code(dist, synd_rounds, per, depolarization, measure, reset)
         dc = decoder(code)
-        detections, observed_flips = run_simulations(code, dc, shots)
+        detections, observed_flips = run_simulations(code, shots)
 
-        latencies = []
+        predictions = dc.decode_batch(detections)
+        errors = np.any(detections != 0, axis=1)
+
         fails = 0
-
+        total = 0
         for i in range(shots):
-            syndrome = detections[i]
-
-            start = time.perf_counter()
-            prediction = dc.decode(syndrome)
-            end = time.perf_counter()
-
-            latencies.append(end-start)
-            if not np.array_equal(prediction, observed_flips[i]):
-                fails += 1
+            if errors[i]:
+                total += 1
+                if not np.array_equal(predictions[i], observed_flips[i]):
+                    fails += 1
+        
+        cond_error_rate = 0
+        if total != 0:
+            cond_error_rate = fails / total
 
         print()
-        print(f"Distance: {dist}, Physical Error Rate: {per}")
-        print(f"Average Decoding Latency: {np.mean(latencies):.10f}")
+        print(f"Physical Error Rate: {per}")
+        print(f"Conditional Error Rate: {cond_error_rate:.8f}")
         print()
 
     return None
 
-def threshold():
-    for dist in range(3,10,2):
+# Plot decoding time as per increases later (distance is a part of scalability)
+def latency():
+    for i in range(1,11): # 0.0005 - 0.005
+        per = 5*i/10000
         code = surface_code(dist, synd_rounds, per)
         dc = decoder(code)
-        detections, observed_flips = run_simulations(code, dc, shots)
+        detections, observed_flips = run_simulations(code, shots)
 
         start = time.perf_counter()
-        predictions = dc.decode_batch(detections)
+        dc.decode_batch(detections)
         end = time.perf_counter()
-
-        #fails = np.sum(np,any(predictions[:,0] != observed_flips))
-        fails = 0
-        for i in range(shots):
-            if not np.array_equal(predictions[i], observed_flips[i]):
-                fails += 1
-
-        log_error_rate = fails / shots
-        avg_latency = (end - start)/shots
         
+        avg_latency = (end - start)/shots
+
         print()
         print(f"Distance: {dist}, Physical Error Rate: {per}")
-        print(f"Logical Error Rate: {log_error_rate:.8f}")
         print(f"Average Decoding Latency: {avg_latency:.10f}")
         print()
+
+    return None
+
+# Plot logical error rate as distnace increases
+def threshold():
+    for dist in range(3,10,2):
+        for i in range(1,21): # 0.0005 - 0.01
+            per = 5*i/10000
+            code = surface_code(dist, synd_rounds, per)
+            dc = decoder(code)
+            detections, observed_flips = run_simulations(code, shots)
+
+            start = time.perf_counter()
+            predictions = dc.decode_batch(detections)
+            end = time.perf_counter()
+
+            #fails = np.sum(np,any(predictions[:,0] != observed_flips))
+            fails = 0
+            for i in range(shots):
+                if not np.array_equal(predictions[i], observed_flips[i]):
+                    fails += 1
+
+            log_error_rate = fails / shots
+            avg_latency = (end - start)/shots
+
+            print()
+            print(f"Distance: {dist}, Physical Error Rate: {per}")
+            print(f"Logical Error Rate: {log_error_rate:.8f}")
+            print(f"Average Decoding Latency: {avg_latency:.10f}")
+            print()
     
     return None
 
+# Include different error models and test correctness
 def robustness():
+    print("\n--------- Control ---------\n")
+    control_plot = correctness()
+    print("\n--------- Depolarization ---------\n")
+    depolarization_plot = correctness(depolarization=1)
+    print("\n--------- Measure ---------\n")
+    measure_plot = correctness(measure=1)
+    print("\n--------- Reset ---------\n")
+    reset_plot = correctness(reset=1)
     return None
 
+# Track qubit counts and decoding latency -> space time measurements
 def scalability():
     return None
 
