@@ -46,7 +46,7 @@ def run_UF_simulation():
 
         print(f"Distance: {dist}, Physical Error Rate: {per}")
         print(f"Logical Error Rate: {log_error_rate}")
-        print(f"Average Decoding Latency: {avg_latency}")
+        print(f"Average Decoding Latency: {avg_latency}\n")
 
 
 
