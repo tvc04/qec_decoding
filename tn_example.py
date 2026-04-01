@@ -1,3 +1,4 @@
+import cudaq
 import cudaq_qec as qec
 import numpy as np
 import stim
@@ -13,6 +14,8 @@ def parse_detector_error_model(detector_error_model):
 
     return out_H, out_L, [float(p) for p in matrices.priors]
 
+def run_simulations(distance, per, shots):
+    pass
 
 circuit = stim.Circuit.generated("surface_code:rotated_memory_z",
                                  rounds=3,
@@ -36,8 +39,7 @@ decoder = qec.get_decoder(
 
 num_shots = 5
 sampler = circuit.compile_detector_sampler()
-detection_events, observable_flips = sampler.sample(num_shots,
-                                                    separate_observables=True)
+detection_events, observable_flips = sampler.sample(num_shots, separate_observables=True)
 
 res = decoder.decode_batch(detection_events)
 
