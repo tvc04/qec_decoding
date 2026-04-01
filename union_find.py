@@ -7,6 +7,8 @@ from panqec.error_models import PauliErrorModel
 from panqec.decoders import UnionFindDecoder
 from panqec.simulation import DirectSimulation
 
+import pymatching
+
 
 # -----------------------------
 #       TEST PARAMETERS
@@ -16,7 +18,7 @@ from panqec.simulation import DirectSimulation
 dist = 5
 per = 0.001     # 1/1000
 synd_rounds = 5
-shots = 100000
+shots = 1000
 
 
 
@@ -36,11 +38,10 @@ def run_UF_simulation():
 
         for i in range(1):
             start = time.perf_counter()
-            sim.run(1)
+            sim.run(100)
             end = time.perf_counter()
 
             latencies.append(end - start)
-            print(sim.results)
         
         log_error_rate = fails/shots
         avg_latency = np.mean(latencies)
@@ -50,38 +51,49 @@ def run_UF_simulation():
         print(f"Average Decoding Latency: {avg_latency}\n")
 
 
-def stim_pipeline():
-    circuit = stim.Circuit.generated(
-        "surface_code:rotated_memore_x",
-        distance = dist,
-        rounds=1,
-        after_clifford_depolarization=per
-    )
 
-    surface_code = RotatedPlanar2DCode(dist)
-    error_model = PauliErrorModel(r_x=1/3, r_y=1/3, r_z=1/3)
-    decoder = UnionFindDecoder(surface_code, error_model, per)
+def test_sim():
+    for dist in range(3, 10, 2):
+        # Build the Stim rotated surface code circuit
+        circuit = stim.Circuit.generated(
+            "surface_code:rotated_memory_x",
+            distance=dist,
+            rounds=1,
+            after_clifford_depolarization=per
+        )
 
-    samples = circuit.compile_detector_sampler()
-    detections, observed_flips = samples.sample(shots, separate_observables=True)
+        #surface_code = RotatedPlanar2DCode(dist)
+        error_model = PauliErrorModel(r_x=1/3, r_y=1/3, r_z=1/3)
+        decoder = UnionFindDecoder(circuit, error_model, per)
 
-    fails = 0
+        # Compile Stim sampler for detector outputs
+        sampler = circuit.compile_detector_sampler()
 
-    for i in range(shots):
-        stim_syndrome = detections[i]
-        panqec_syndrome = stim_syndrome.astype(int)
-        correction = decoder.decode(panqec_syndrome)
+        fails = 0
+        latencies = []
 
-        logical_prediction = surface_code.logical_errors(correction)
+        for _ in range(shots):
+            # Sample one set of detector events
+            detector_array = sampler.sample(shots=1)[0]
+            syndrome_bool = detector_array.astype(bool)
 
-        if not np.array_equal(logical_prediction, observed_flips[i]):
-            fails += 1
+            # --- Decode and measure latency ---
+            start = time.perf_counter()
+            correction = decoder.decode(syndrome_bool)  # Union-Find decode method
+            end = time.perf_counter()
+            latencies.append(end - start)
 
-    log_error_rate = fails/shots
-    print(f"Logical Error Rate: {log_error_rate}")
+            # Check if a logical error occurred
+            logical_failed = decoder.check_logical_error(correction)  # your method
+            if logical_failed:
+                fails += 1
 
+        log_error_rate = fails / shots
+        avg_latency_ms = np.mean(latencies) * 1000
 
-
+        print(f"Distance: {dist}, Physical Error Rate: {per}")
+        print(f"Logical Error Rate: {log_error_rate}")
+        print(f"Average Decoding Latency: {avg_latency_ms:.3f} ms\n")
 
 
 # ---------------------------
@@ -107,7 +119,8 @@ def union_find_test(test_num):
     output_plot = None
 
     if test_num == 1:
-        output_plot = stim_pipeline()
+        print(dir(pymatching.Matching))
+        output_plot = test_sim()
     if test_num == 2:
         output_plot = latency()
     if test_num == 3:
