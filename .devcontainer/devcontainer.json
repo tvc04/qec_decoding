@@ -1,0 +1,7 @@
+{
+  "name": "CUDA-QX Container",
+  "image": "ghcr.io/nvidia/cudaqx",
+  "runArgs": [],
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind"
+}
