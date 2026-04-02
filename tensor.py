@@ -76,7 +76,7 @@ def run_simulations(surface_code, shots):
 # Conditional correctness: prediction correctness in cases with errors
 def correctness(depolarization = 0, measure = 0, reset = 0):
     results = []
-    for i in range(1,11): # 0.0005 - 0.005
+    for i in range(1,21): # 0.0005 - 0.01
         per = 5*i/10000
         code = surface_code(dist, synd_rounds, per, depolarization, measure, reset)
         dc = decoder(code)
@@ -113,7 +113,7 @@ def correctness(depolarization = 0, measure = 0, reset = 0):
 def latency(distance = dist):
     results = []
     shots = 1000
-    for i in range(1,11): # 0.0005 - 0.005
+    for i in range(1,21): # 0.0005 - 0.01
         per = 5*i/10000
         code = surface_code(distance, synd_rounds, per)
         dc = decoder(code)
@@ -146,10 +146,11 @@ def latency(distance = dist):
 # Plot logical error rate as distnace increases
 def threshold():
     results = {}
+    shots = 100000
     for dist in range(3,10,2):
         results[f'{dist}'] = []
         dist_results = []
-        for i in range(1,41): # 0.0005 - 0.02
+        for i in range(30,61): # 0.015 - 0.03
             per = 5*i/10000
             code = surface_code(dist, synd_rounds, per)
             dc = decoder(code)
@@ -241,4 +242,4 @@ def tensor_test(test_num):
     
 
 if __name__ == '__main__':
-    tensor_test(2)
+    tensor_test(3)

@@ -2,27 +2,39 @@ import numpy as np
 import json
 import matplotlib.pyplot as plt
 
-# Load JSON file
-with open("results/mwpm/results_latency.json", "r") as f:
-    data = json.load(f)
 
-# Extract values
-physical = [point["physical_error_rate"] for point in data]
-latency = [point["average_decoding_latency"] for point in data]
+def generate_plot(decoder_type):
+    decoder = ""
+    if (decoder_type == 1):
+        decoder = "mwpm"
+    if (decoder_type == 2):
+        decoder = "union"
+    if (decoder_type == 3):
+        decoder = "tensor"
+    if (decoder_type == 4):
+        decoder = "nueral"
 
-# Sort for clean plotting
-physical, latency = zip(*sorted(zip(physical, latency)))
+    # Load JSON file
+    with open(f"results/{decoder}/results_latency.json", "r") as f:
+        data = json.load(f)
 
-# Plot
-plt.figure()
-plt.plot(physical, latency, marker='o')
+    physical = [point["physical_error_rate"] for point in data]
+    latency = [point["average_decoding_latency"] for point in data]
 
-# Log scale on x (y can be linear or log depending on variation)
-plt.xscale("log")
+    physical, latency = zip(*sorted(zip(physical, latency)))
 
-plt.xlabel("Physical Error Rate")
-plt.ylabel("Average Decoding Latency (seconds)")
-plt.title("Decoder Latency vs Physical Error Rate")
-plt.grid(True)
+    plt.figure()
+    plt.plot(physical, latency, marker='o')
 
-plt.show()
+    plt.xscale("log")
+
+    plt.xlabel("Physical Error Rate")
+    plt.ylabel("Average Decoding Latency (seconds)")
+    plt.title("Decoder Latency vs Physical Error Rate")
+    plt.grid(True)
+
+    plt.show()
+
+
+if __name__ == '__main__':
+    generate_plot(1)

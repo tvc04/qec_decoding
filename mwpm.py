@@ -216,4 +216,4 @@ def mwpm_test(test_num):
     
 
 if __name__ == '__main__':
-    mwpm_test(2)
+    mwpm_test(3)

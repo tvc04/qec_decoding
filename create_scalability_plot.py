@@ -2,33 +2,42 @@ import numpy as np
 import json
 import matplotlib.pyplot as plt
 
-# Load JSON file
-with open("results/mwpm/results_scalability.json", "r") as f:
-    data = json.load(f)
 
-plt.figure()
+def generate_plot(decoder_type):
+    decoder = ""
+    if (decoder_type == 1):
+        decoder = "mwpm"
+    if (decoder_type == 2):
+        decoder = "union"
+    if (decoder_type == 3):
+        decoder = "tensor"
+    if (decoder_type == 4):
+        decoder = "nueral"
 
-# Plot each code distance
-for distance, entries in data.items():
-    physical = [p["physical_error_rate"] for p in entries]
-    latency = [p["average_decoding_latency"] for p in entries]
+    # Load JSON file
+    with open(f"results/{decoder}/results_scalability.json", "r") as f:
+        data = json.load(f)
 
-    # Sort for clean curves
-    physical, latency = zip(*sorted(zip(physical, latency)))
+    plt.figure()
 
-    plt.plot(physical, latency, marker='o', label=f"d={distance}")
+    for distance, entries in data.items():
+        physical = [p["physical_error_rate"] for p in entries]
+        latency = [p["average_decoding_latency"] for p in entries]
 
-# Log scale on x (like threshold plots)
-plt.xscale("log")
+        physical, latency = zip(*sorted(zip(physical, latency)))
 
-# Y-scale: usually linear (latency changes are small)
-# Uncomment if needed:
-# plt.yscale("log")
+        plt.plot(physical, latency, marker='o', label=f"d={distance}")
 
-plt.xlabel("Physical Error Rate")
-plt.ylabel("Average Decoding Latency (seconds)")
-plt.title("Scalability Plot (Latency vs Physical Error Rate)")
-plt.legend()
-plt.grid(True)
+    plt.xscale("log")
 
-plt.show()
+    plt.xlabel("Physical Error Rate")
+    plt.ylabel("Average Decoding Latency (seconds)")
+    plt.title("Scalability Plot (Latency vs Physical Error Rate)")
+    plt.legend()
+    plt.grid(True)
+
+    plt.show()
+
+
+if __name__ == '__main__':
+    generate_plot(1)
