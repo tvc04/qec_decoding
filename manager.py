@@ -1,6 +1,7 @@
 import sys
 import mwpm
 import union_find
+import tensor
 
 
 # -----------------------------
@@ -21,7 +22,7 @@ def main():
     if (decoder_type == 2):
         union_find.union_find_test(test_type)
     if (decoder_type == 3):
-        return
+        tensor.tensor_test(test_type)
     if (decoder_type == 4):
         return
 

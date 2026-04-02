@@ -5,3 +5,5 @@ panqec
 cudaq-qec
 cudaq-qec[tensor-network-decoder]
 beliefmatching
+optuna
+nevergrad

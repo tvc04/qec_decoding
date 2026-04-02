@@ -1,244 +1,203 @@
+import cudaq
+import cudaq_qec as qec
 import numpy as np
-import stim
 import time
-import quimb.tensor as qtn
-import cotengra as ctg
-from collections import Counter
+import stim
+from beliefmatching.belief_matching import detector_error_model_to_check_matrices
 
 
-# ============================================================
-# 1. Stim circuit
-# ============================================================
+# -----------------------------
+#       TEST PARAMETERS
+# -----------------------------
 
-def make_circuit(distance, p):
-    return stim.Circuit.generated(
+# Default values (changed in tests)
+dist = 5
+per = 0.001     # 1/1000
+synd_rounds = 1
+shots = 1000000
+
+
+# --------------------------------------------------------
+#       CIRCUIT CONSTRUCTION / SIMULATION FUNCTIONS
+# --------------------------------------------------------
+
+# Create surface code circuit
+def surface_code(distance, rounds, phys_error_rate, depolarization = 0, measure = 0, reset = 0):
+    sc = stim.Circuit.generated(
         "surface_code:rotated_memory_x",
         distance=distance,
-        rounds=1,
-        after_clifford_depolarization=p
+        rounds=rounds,
+        after_clifford_depolarization=phys_error_rate,
+        before_round_data_depolarization=phys_error_rate*depolarization,
+        before_measure_flip_probability=phys_error_rate*measure,
+        after_reset_flip_probability=phys_error_rate*reset
+    )
+    return sc
+
+# Makes error model usable for cudaq decoder
+def parse_detector_error_model(detector_error_model):
+    matrices = detector_error_model_to_check_matrices(detector_error_model)
+
+    out_H = np.zeros(matrices.check_matrix.shape)
+    matrices.check_matrix.astype(np.float64).toarray(out=out_H)
+    out_L = np.zeros(matrices.observables_matrix.shape)
+    matrices.observables_matrix.astype(np.float64).toarray(out=out_L)
+
+    return out_H, out_L, [float(p) for p in matrices.priors]
+
+# Creates cudaq tensor network decoder
+def decoder(surface_code):
+    detector_error_model = surface_code.detector_error_model(decompose_errors=True)
+
+    H, logicals, noise_model = parse_detector_error_model(detector_error_model)
+
+    decoder = qec.get_decoder(
+        "tensor_network_decoder",
+        H,
+        logical_obs=logicals,
+        noise_model=noise_model,
+        contract_noise_model=True,
     )
 
+    return decoder
 
-# ============================================================
-# 2. DEM → parity checks
-# ============================================================
-
-def dem_to_checks(dem):
-    checks = []
-
-    for inst in dem:
-        if inst.type == "error":
-            detectors = []
-
-            for t in inst.targets_copy():
-                if t.is_relative_detector_id():
-                    detectors.append(t.val)
-
-            if len(detectors) > 0:
-                checks.append(detectors)
-
-    return checks
+# Generates sample error syndrome measurments
+def run_simulations(surface_code, shots):
+    samples = surface_code.compile_detector_sampler()
+    return samples.sample(shots, separate_observables=True)
 
 
-# ============================================================
-# 3. Build Tensor Network
-# ============================================================
+# ---------------------------
+#       TEST FUNCTIONS
+# ---------------------------
 
-def build_tn_from_dem(checks, syndrome, p):
-    tn = qtn.TensorNetwork()
+# Plot decoder's conditional correctness as per increases
+# Conditional correctness: prediction correctness in cases with errors
+def correctness(depolarization = 0, measure = 0, reset = 0):
+    for i in range(1,11): # 0.0005 - 0.005
+        per = 5*i/10000
+        code = surface_code(dist, synd_rounds, per, depolarization, measure, reset)
+        dc = decoder(code)
+        detections, observed_flips = run_simulations(code, shots)
 
-    # All detector variables
-    all_vars = sorted(set(v for check in checks for v in check))  # <<< sorted for deterministic order
-    var_inds = []
+        res = dc.decode_batch(detections)
 
-    # --- Variable tensors ---
-    for v in all_vars:
-        ind = f'd{v}'
-        var_inds.append(ind)
+        preds = [r.result[0] > 0.5 for r in res]
+        actuals = [bool(o[0]) for o in observed_flips]
 
-        tn.add_tensor(qtn.Tensor(
-            data=np.array([1 - p, p], dtype=float),
-            inds=(ind,),
-            tags={f'D{v}'}
-        ))
+        #fails = sum(p != a for p, a in zip(preds, actuals))
+        #logical_error_rate = fails / len(preds)
 
-    # --- Check tensors ---
-    for i, check in enumerate(checks):
-        inds = tuple(f'd{v}' for v in check)
-        shape = (2,) * len(check)
+        fails = 0
+        total = 0
 
-        data = np.zeros(shape, dtype=float)
-        s = int(sum(syndrome[v] for v in check) % 2)
+        for p, a in zip(preds, actuals):
+            if a:  # condition on actual logical flip
+                total += 1
+                if p != a:
+                    fails += 1
 
-        for idx in np.ndindex(shape):
-            if (sum(idx) % 2) == s:
-                data[idx] = 1.0
+        cond_error_rate = fails / total if total > 0 else 0
 
-        tn.add_tensor(qtn.Tensor(
-            data=data,
-            inds=inds,
-            tags={f'C{i}'}
-        ))
+        print()
+        print(f"Distance: {dist}, Physical Error Rate: {per}")
+        print(f"Conditional error rate: {cond_error_rate:.8f}")
+        print()
 
-    return tn, var_inds
+    return None
 
-
-# ============================================================
-# 4. Cotengra path precompute + contraction wrapper  <<< ADDED
-# ============================================================
-
-def _find_open_inds(tn):
-    c = Counter(ind for T in tn.tensors for ind in T.inds)
-    return tuple(ind for ind, n in c.items() if n == 1)
-
-def precompute_trees_with_hyperoptimizer(tn_template, var_inds,
-                                        max_repeats=32, progbar=False):
-    size_dict = tn_template.ind_sizes
-
-    opt = ctg.HyperOptimizer(
-        max_repeats=max_repeats,
-        progbar=progbar,
-        minimize='flops',
-    )
-
-    trees = {}
-
-    # ----- Scalar tree (only if TN is closed) -----
-    open_inds = _find_open_inds(tn_template)
-    if len(open_inds) == 0:
-        # quimb builds the tree using cotengra optimizer
-        trees[()] = tn_template.contraction_tree(
-            output_inds=(),
-            optimize=opt,
-        )
-    else:
-        # Not closed, skip scalar tree (or set output_inds=open_inds)
-        # Often you actually want output_inds=open_inds for a "partition function with open legs".
-        # We'll skip to avoid confusion.
-        print(f"[warn] TN has open indices (scalar contraction invalid): {open_inds}")
-
-    # ----- One tree per marginal -----
-    for ind in var_inds:
-        trees[(ind,)] = tn_template.contraction_tree(
-            output_inds=(ind,),
-            optimize=opt,
-        )
-
-    return trees
-
-
-def contract_with_tree(tn, tree, output_inds=None):
-    """
-    Contract TN using a precomputed cotengra ContractionTree.
-    """
-    return tn.contract(output_inds=output_inds, optimize=tree)
-
-
-# ============================================================
-# 5. Decoder (now uses cached trees)  <<< MODIFIED
-# ============================================================
-
-def decode_bsv_with_trees(tn, var_inds, trees):
-    marginals = {}
-
-    for ind in var_inds:
-        tn_copy = tn.copy()
-
-        tree = trees[(ind,)]
-        result = contract_with_tree(tn_copy, tree, output_inds=(ind,))
-
-        prob = np.asarray(result.data, dtype=float)
-
-        if prob.sum() == 0:
-            prob = np.array([0.5, 0.5], dtype=float)
-        else:
-            prob = prob / prob.sum()
-
-        marginals[ind] = prob
-
-    correction = {k: int(v[1] > v[0]) for k, v in marginals.items()}
-    return correction, marginals
-
-
-# ============================================================
-# 6. Simulation loop  <<< MODIFIED
-# ============================================================
-
-def run_bsv_simulation(distance=3, p=0.05, shots=100, chi=8,
-                       hyper_max_repeats=32, hyper_progbar=False):
-
-    circuit = make_circuit(distance, p)
-    dem = circuit.detector_error_model()
-    checks = dem_to_checks(dem)
-
-    if len(checks) == 0:
-        raise ValueError("No parity checks extracted from DEM.")
-
-    sampler = circuit.compile_detector_sampler()
-
-    # --- Build a template TN once and precompute trees ---
-    dets0, obs0 = sampler.sample(1, separate_observables=True)
-    dets0 = dets0[0]
-
-    tn_template, var_inds = build_tn_from_dem(checks, dets0, p)
-
-    trees = precompute_trees_with_hyperoptimizer(
-        tn_template,
-        var_inds,
-        max_repeats=hyper_max_repeats,
-        progbar=hyper_progbar
-    )
-
-    failures = 0
-    latencies = []
-
-    for shot in range(shots):
-        dets, obs = sampler.sample(1, separate_observables=True)
-        dets = dets[0]
-
-        tn, var_inds2 = build_tn_from_dem(checks, dets, p)
-        # sanity check structure didn't change
-        assert var_inds2 == var_inds
+# Plot decoding time as per increases later (distance is a part of scalability)
+def latency(distance = dist):
+    shots = 1000
+    for i in range(1,11): # 0.0005 - 0.005
+        per = 5*i/10000
+        code = surface_code(distance, synd_rounds, per)
+        dc = decoder(code)
+        detections, observed_flips = run_simulations(code, shots)
 
         start = time.perf_counter()
-        correction, _ = decode_bsv_with_trees(tn, var_inds, trees)
+
+        predictions = []
+        for i in range(shots):
+            det = detections[i].astype(float)
+            pred = dc.decode(det)
+            predictions.append(pred)
+
         end = time.perf_counter()
-        latencies.append(end-start)
 
-        # --- VERY SIMPLE logical check (placeholder) ---
-        predicted = sum(correction.values()) % 2
-        actual = obs[0][0]
+        avg_latency = (end - start)/shots
 
-        if predicted != actual:
-            failures += 1
+        print()
+        print(f"Distance: {distance}, Physical Error Rate: {per}")
+        print(f"Average Decoding Latency: {avg_latency:.10f}")
+        print()
 
-        if shot % 100 == 0:
-            print(f"Shot {shot}: correction size = {len(correction)}")
+    return None
 
-    return failures / shots, np.mean(latencies)
+# Plot logical error rate as distnace increases
+def threshold():
+    for dist in range(3,10,2):
+        for i in range(1,21): # 0.0005 - 0.01
+            per = 5*i/10000
+            code = surface_code(dist, synd_rounds, per)
+            dc = decoder(code)
+            detections, observed_flips = run_simulations(code, shots)
+
+            start = time.perf_counter()
+            res = dc.decode_batch(detections)
+            end = time.perf_counter()
+
+            avg_latency = (end - start)/shots
+
+            preds = [r.result[0] > 0.5 for r in res]
+            actuals = [bool(o[0]) for o in observed_flips]
+
+            fails = sum(p != a for p, a in zip(preds, actuals))
+            logical_error_rate = fails / len(preds)
+
+            print()
+            print(f"Distance: {dist}, Physical Error Rate: {per}")
+            print(f"Logical error rate: {logical_error_rate:.8f}")
+            print(f"Average Decoding Latency: {avg_latency:.10f}")
+            print()
+
+    return None
+
+# Include different error models and test correctness
+def robustness():
+    print("\n--------- Control ---------\n")
+    control_plot = correctness()
+    print("\n--------- Depolarization ---------\n")
+    depolarization_plot = correctness(depolarization=1)
+    print("\n--------- Measure ---------\n")
+    measure_plot = correctness(measure=1)
+    print("\n--------- Reset ---------\n")
+    reset_plot = correctness(reset=1)
+    print("\n--------- All Errors ---------\n")
+    all_plot = correctness(depolarization=1, measure=1, reset=1)
+
+    return None
+
+# Track qubit counts and decoding latency -> space time measurements
+def scalability():
+    for dist in range(3,10,2):
+        latency(dist)
+
+    return None
 
 
-# ============================================================
-# 7. Run example
-# ============================================================
+def tensor_test(test_num):
+    output_plot = None
 
-if __name__ == "__main__":
-    d = 5
-    p = 0.001
-    shots = 1000
-    chi = 8
-
-    logical_error_rate, avg_latency = run_bsv_simulation(
-        distance=d,
-        p=p,
-        shots=shots,
-        chi=chi,
-        hyper_max_repeats=64,     # tune
-        hyper_progbar=True
-    )
-
-    print("\n=== RESULT ===")
-    print(f"Distance: {d}")
-    print(f"Physical error rate: {p}")
-    print(f"Logical error rate: {logical_error_rate}")
-    print(f"Logical error rate: {avg_latency}")
+    if test_num == 1:
+        output_plot = correctness()
+    if test_num == 2:
+        output_plot = latency()
+    if test_num == 3:
+        output_plot = threshold()
+    if test_num == 4:
+        output_plot = robustness()
+    if test_num == 5:
+        output_plot = scalability()
+    
+    # Display plot?

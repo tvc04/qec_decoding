@@ -12,7 +12,7 @@ import time
 dist = 5
 per = 0.001     # 1/1000
 synd_rounds = 5
-shots = 1000000
+shots = 100000
 
 
 # --------------------------------------------------------
@@ -38,7 +38,7 @@ def decoder(surface_code):
     matching = pymatching.Matching.from_detector_error_model(error_model)
     return matching
 
-# Samples possible error outputs and decodes them
+# Generates sample error syndrome
 def run_simulations(surface_code, shots):
     samples = surface_code.compile_detector_sampler()
     return samples.sample(shots=shots, separate_observables=True)
@@ -80,10 +80,10 @@ def correctness(depolarization = 0, measure = 0, reset = 0):
     return None
 
 # Plot decoding time as per increases later (distance is a part of scalability)
-def latency():
+def latency(distnace = dist):
     for i in range(1,11): # 0.0005 - 0.005
         per = 5*i/10000
-        code = surface_code(dist, synd_rounds, per)
+        code = surface_code(distance, synd_rounds, per)
         dc = decoder(code)
         detections, observed_flips = run_simulations(code, shots)
 
@@ -94,7 +94,7 @@ def latency():
         avg_latency = (end - start)/shots
 
         print()
-        print(f"Distance: {dist}, Physical Error Rate: {per}")
+        print(f"Distance: {distance}, Physical Error Rate: {per}")
         print(f"Average Decoding Latency: {avg_latency:.10f}")
         print()
 
@@ -140,10 +140,16 @@ def robustness():
     measure_plot = correctness(measure=1)
     print("\n--------- Reset ---------\n")
     reset_plot = correctness(reset=1)
+    print("\n--------- All Errors ---------\n")
+    all_plot = correctness(depolarization=1, measure=1, reset=1)
+
     return None
 
 # Track qubit counts and decoding latency -> space time measurements
 def scalability():
+    for dist in range(3,10,2):
+        latency(dist)
+
     return None
 
 
