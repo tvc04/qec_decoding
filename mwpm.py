@@ -2,6 +2,7 @@ import stim
 import pymatching
 import numpy as np
 import time
+import json
 
 
 # -----------------------------
@@ -51,7 +52,8 @@ def run_simulations(surface_code, shots):
 # Plot decoder's conditional correctness as per increases
 # Conditional correctness: prediction correctness in cases with errors
 def correctness(depolarization = 0, measure = 0, reset = 0):
-    for i in range(1,11): # 0.0005 - 0.005
+    results = []
+    for i in range(1,21): # 0.0005 - 0.01
         per = 5*i/10000
         code = surface_code(dist, synd_rounds, per, depolarization, measure, reset)
         dc = decoder(code)
@@ -72,100 +74,146 @@ def correctness(depolarization = 0, measure = 0, reset = 0):
         if total != 0:
             cond_error_rate = fails / total
 
+        results.append({
+            "physical_error_rate": per,
+            "conditional_error_rate": cond_error_rate
+        })
+
         print()
         print(f"Physical Error Rate: {per}")
         print(f"Conditional Error Rate: {cond_error_rate:.8f}")
         print()
 
-    return None
+    return results
 
 # Plot decoding time as per increases later (distance is a part of scalability)
-def latency(distnace = dist):
-    for i in range(1,11): # 0.0005 - 0.005
+def latency(distance = dist):
+    results = []
+    for i in range(1,21): # 0.0005 - 0.01
         per = 5*i/10000
         code = surface_code(distance, synd_rounds, per)
         dc = decoder(code)
         detections, observed_flips = run_simulations(code, shots)
 
-        start = time.perf_counter()
-        dc.decode_batch(detections)
-        end = time.perf_counter()
+        latencies = []
         
-        avg_latency = (end - start)/shots
+        for i in range(len(detections)):
+            start = time.perf_counter()
+            dc.decode(detections[i])
+            end = time.perf_counter()
+            latencies.append(end-start)
+        
+        avg_latency = np.mean(latencies)
+
+        results.append({
+            "physical_error_rate": per,
+            "average_decoding_latency": avg_latency
+        })
 
         print()
         print(f"Distance: {distance}, Physical Error Rate: {per}")
         print(f"Average Decoding Latency: {avg_latency:.10f}")
         print()
-
-    return None
+    
+    return results
 
 # Plot logical error rate as distnace increases
 def threshold():
+    results = {}
     for dist in range(3,10,2):
-        for i in range(1,21): # 0.0005 - 0.01
+        results[f'{dist}'] = []
+        dist_results = []
+        for i in range(1,41): # 0.0005 - 0.02
             per = 5*i/10000
             code = surface_code(dist, synd_rounds, per)
             dc = decoder(code)
             detections, observed_flips = run_simulations(code, shots)
 
-            start = time.perf_counter()
             predictions = dc.decode_batch(detections)
-            end = time.perf_counter()
 
-            #fails = np.sum(np,any(predictions[:,0] != observed_flips))
             fails = 0
             for i in range(shots):
                 if not np.array_equal(predictions[i], observed_flips[i]):
                     fails += 1
 
             log_error_rate = fails / shots
-            avg_latency = (end - start)/shots
+
+            dist_results.append({
+                "physical_error_rate": per,
+                "logical_error_rate": log_error_rate
+            })
 
             print()
             print(f"Distance: {dist}, Physical Error Rate: {per}")
             print(f"Logical Error Rate: {log_error_rate:.8f}")
-            print(f"Average Decoding Latency: {avg_latency:.10f}")
             print()
-    
-    return None
+        
+        results[f'{dist}'].extend(dist_results)
+
+    return results
 
 # Include different error models and test correctness
 def robustness():
+    results = {}
     print("\n--------- Control ---------\n")
-    control_plot = correctness()
+    results['control'] = []
+    control_results = correctness()
+    results['control'].extend(control_results)
     print("\n--------- Depolarization ---------\n")
-    depolarization_plot = correctness(depolarization=1)
+    results['depolarization'] = []
+    depolarization_results = correctness(depolarization=1)
+    results['depolarization'].extend(depolarization_results)
     print("\n--------- Measure ---------\n")
-    measure_plot = correctness(measure=1)
+    results['measure'] = []
+    measure_results = correctness(measure=1)
+    results['measure'].extend(measure_results)
     print("\n--------- Reset ---------\n")
-    reset_plot = correctness(reset=1)
+    results['reset'] = []
+    reset_results = correctness(reset=1)
+    results['reset'].extend(reset_results)
     print("\n--------- All Errors ---------\n")
-    all_plot = correctness(depolarization=1, measure=1, reset=1)
+    results['all'] = []
+    all_results = correctness(depolarization=1, measure=1, reset=1)
+    results['all'].extend(all_results)
 
-    return None
+    return results
 
 # Track qubit counts and decoding latency -> space time measurements
 def scalability():
+    results = {}
     for dist in range(3,10,2):
-        latency(dist)
-
-    return None
+        results[f'{dist}'] = []
+        dist_results = latency(dist)
+        results[f'{dist}'].extend(dist_results)
+    
+    return results
 
 
 
 def mwpm_test(test_num):
-    output_plot = None
-
+    results = []
+    output_file = ""
     if test_num == 1:
-        output_plot = correctness()
+        results = correctness()
+        output_file = "results/mwpm/results_correctness.json"
     if test_num == 2:
-        output_plot = latency()
+        results = latency()
+        output_file = "results/mwpm/results_latency.json"
     if test_num == 3:
-        output_plot = threshold()
+        results = threshold()
+        output_file = "results/mwpm/results_threshold.json"
     if test_num == 4:
-        output_plot = robustness()
+        results = robustness()
+        output_file = "results/mwpm/results_robustness.json"
     if test_num == 5:
-        output_plot = scalability()
+        results = scalability()
+        output_file = "results/mwpm/results_scalability.json"
     
-    # Display plot?
+    with open(output_file, "w") as f:
+        json.dump(results, f, indent=4)
+
+    print(f"Results saved to {output_file}")
+    
+
+if __name__ == '__main__':
+    mwpm_test(2)

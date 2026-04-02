@@ -1,4 +1,5 @@
 numpy
+json
 stim
 pymatching
 panqec

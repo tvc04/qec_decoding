@@ -1,5 +1,6 @@
 import numpy as np
 import time
+import json
 import stim
 
 from panqec.codes.surface_2d import RotatedPlanar2DCode
@@ -116,18 +117,13 @@ def scalability():
     pass
 
 def union_find_test(test_num):
-    output_plot = None
-
     if test_num == 1:
-        print(dir(pymatching.Matching))
-        output_plot = test_sim()
+        correctness()
     if test_num == 2:
-        output_plot = latency()
+        latency()
     if test_num == 3:
-        output_plot = threshold()
+        threshold()
     if test_num == 4:
-        output_plot = robustness()
+        robustness()
     if test_num == 5:
-        output_plot = scalability()
-    
-    # Display plot?
+        scalability()

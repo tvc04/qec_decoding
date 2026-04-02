@@ -2,6 +2,7 @@ import cudaq
 import cudaq_qec as qec
 import numpy as np
 import time
+import json
 import stim
 from beliefmatching.belief_matching import detector_error_model_to_check_matrices
 
@@ -74,6 +75,7 @@ def run_simulations(surface_code, shots):
 # Plot decoder's conditional correctness as per increases
 # Conditional correctness: prediction correctness in cases with errors
 def correctness(depolarization = 0, measure = 0, reset = 0):
+    results = []
     for i in range(1,11): # 0.0005 - 0.005
         per = 5*i/10000
         code = surface_code(dist, synd_rounds, per, depolarization, measure, reset)
@@ -85,12 +87,8 @@ def correctness(depolarization = 0, measure = 0, reset = 0):
         preds = [r.result[0] > 0.5 for r in res]
         actuals = [bool(o[0]) for o in observed_flips]
 
-        #fails = sum(p != a for p, a in zip(preds, actuals))
-        #logical_error_rate = fails / len(preds)
-
         fails = 0
         total = 0
-
         for p, a in zip(preds, actuals):
             if a:  # condition on actual logical flip
                 total += 1
@@ -99,15 +97,21 @@ def correctness(depolarization = 0, measure = 0, reset = 0):
 
         cond_error_rate = fails / total if total > 0 else 0
 
+        results.append({
+            "physical_error_rate": per,
+            "conditional_error_rate": cond_error_rate
+        })
+
         print()
         print(f"Distance: {dist}, Physical Error Rate: {per}")
         print(f"Conditional error rate: {cond_error_rate:.8f}")
         print()
 
-    return None
+    return results
 
 # Plot decoding time as per increases later (distance is a part of scalability)
 def latency(distance = dist):
+    results = []
     shots = 1000
     for i in range(1,11): # 0.0005 - 0.005
         per = 5*i/10000
@@ -127,27 +131,31 @@ def latency(distance = dist):
 
         avg_latency = (end - start)/shots
 
+        results.append({
+            "physical_error_rate": per,
+            "average_decoding_latency": avg_latency
+        })
+
         print()
         print(f"Distance: {distance}, Physical Error Rate: {per}")
         print(f"Average Decoding Latency: {avg_latency:.10f}")
         print()
-
-    return None
+    
+    return results
 
 # Plot logical error rate as distnace increases
 def threshold():
+    results = {}
     for dist in range(3,10,2):
-        for i in range(1,21): # 0.0005 - 0.01
+        results[f'{dist}'] = []
+        dist_results = []
+        for i in range(1,41): # 0.0005 - 0.02
             per = 5*i/10000
             code = surface_code(dist, synd_rounds, per)
             dc = decoder(code)
             detections, observed_flips = run_simulations(code, shots)
 
-            start = time.perf_counter()
             res = dc.decode_batch(detections)
-            end = time.perf_counter()
-
-            avg_latency = (end - start)/shots
 
             preds = [r.result[0] > 0.5 for r in res]
             actuals = [bool(o[0]) for o in observed_flips]
@@ -155,49 +163,82 @@ def threshold():
             fails = sum(p != a for p, a in zip(preds, actuals))
             logical_error_rate = fails / len(preds)
 
+            dist_results.append({
+                "physical_error_rate": per,
+                "logical_error_rate": logical_error_rate
+            })
+
             print()
             print(f"Distance: {dist}, Physical Error Rate: {per}")
             print(f"Logical error rate: {logical_error_rate:.8f}")
-            print(f"Average Decoding Latency: {avg_latency:.10f}")
             print()
-
-    return None
+        
+        results[f'{dist}'].extend(dist_results)
+    
+    return results
 
 # Include different error models and test correctness
 def robustness():
+    results = {}
     print("\n--------- Control ---------\n")
-    control_plot = correctness()
+    results['control'] = []
+    control_results = correctness()
+    results['control'].extend(control_results)
     print("\n--------- Depolarization ---------\n")
-    depolarization_plot = correctness(depolarization=1)
+    results['depolarization'] = []
+    depolarization_results = correctness(depolarization=1)
+    results['depolarization'].extend(depolarization_results)
     print("\n--------- Measure ---------\n")
-    measure_plot = correctness(measure=1)
+    results['measure'] = []
+    measure_results = correctness(measure=1)
+    results['measure'].extend(measure_results)
     print("\n--------- Reset ---------\n")
-    reset_plot = correctness(reset=1)
+    results['reset'] = []
+    reset_results = correctness(reset=1)
+    results['reset'].extend(reset_results)
     print("\n--------- All Errors ---------\n")
-    all_plot = correctness(depolarization=1, measure=1, reset=1)
+    results['all'] = []
+    all_results = correctness(depolarization=1, measure=1, reset=1)
+    results['all'].extend(all_results)
 
-    return None
+    return results
 
 # Track qubit counts and decoding latency -> space time measurements
 def scalability():
+    results = {}
     for dist in range(3,10,2):
-        latency(dist)
+        results[f'{dist}'] = []
+        dist_results = latency(dist)
+        results[f'{dist}'].extend(dist_results)
+    
+    return results
 
-    return None
 
 
 def tensor_test(test_num):
-    output_plot = None
-
+    results = []
+    output_file = ""
     if test_num == 1:
-        output_plot = correctness()
+        results = correctness()
+        output_file = "results/tensor/results_correctness.json"
     if test_num == 2:
-        output_plot = latency()
+        results = latency()
+        output_file = "results/tensor/results_latency.json"
     if test_num == 3:
-        output_plot = threshold()
+        results = threshold()
+        output_file = "results/tensor/results_threshold.json"
     if test_num == 4:
-        output_plot = robustness()
+        results = robustness()
+        output_file = "results/tensor/results_robustness.json"
     if test_num == 5:
-        output_plot = scalability()
+        results = scalability()
+        output_file = "results/tensor/results_scalability.json"
     
-    # Display plot?
+    with open(output_file, "w") as f:
+        json.dump(results, f, indent=4)
+
+    print(f"Results saved to {output_file}")
+    
+
+if __name__ == '__main__':
+    tensor_test(2)
