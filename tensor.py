@@ -151,7 +151,7 @@ def threshold():
     for dist in range(3,8,2):   # Resource limited: can't run distance 9
         results[f'{dist}'] = []
         dist_results = []
-        for i in range(30,61): # 0.015 - 0.03
+        for i in range(50,101,2): # 0.025 - 0.05
             per = 5*i/10000
             code = surface_code(dist, synd_rounds, per)
             dc = decoder(code)
