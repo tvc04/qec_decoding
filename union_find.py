@@ -1,3 +1,4 @@
+import sys
 import numpy as np
 import time
 import json
@@ -127,3 +128,11 @@ def union_find_test(test_num):
         robustness()
     if test_num == 5:
         scalability()
+
+
+if __name__ == '__main__':
+    if len(sys.argv) > 2 or int(sys.argv[1]) not in range(1,6):
+        print("Specify Test Type (1=Correctness, 2=Latency, 3=Threshold, 4=Robustness, 5=Scalability)")
+    else:
+        test_type = int(sys.argv[1])
+        union_find_test(test_type)

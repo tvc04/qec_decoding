@@ -1,3 +1,4 @@
+import sys
 import cudaq
 import cudaq_qec as qec
 import numpy as np
@@ -147,7 +148,7 @@ def latency(distance = dist):
 def threshold():
     results = {}
     shots = 100000
-    for dist in range(3,10,2):
+    for dist in range(3,8,2):   # Resource limited: can't run distance 9
         results[f'{dist}'] = []
         dist_results = []
         for i in range(30,61): # 0.015 - 0.03
@@ -242,4 +243,8 @@ def tensor_test(test_num):
     
 
 if __name__ == '__main__':
-    tensor_test(3)
+    if len(sys.argv) > 2 or int(sys.argv[1]) not in range(1,6):
+        print("Specify Test Type (1=Correctness, 2=Latency, 3=Threshold, 4=Robustness, 5=Scalability)")
+    else:
+        test_type = int(sys.argv[1])
+        tensor_test(test_type)
