@@ -4,13 +4,15 @@ Repository for all things QEC Surface Code Decoding!
 
 ## How to Use
 
-Run ```pip install -r requirements.txt``` to access all required libraries. If certain ones aren't accessible (likely cudaq-qec for many devices), all testing files are directly accessible.
+Run ```pip install -r requirements.txt``` to access all required libraries. If certain ones aren't accessible (likely cudaq-qec for many devices), individual files can be tested by running ```python <decoder_file>.py <test_type>```.
 
 If all libraries are installed, run tests with the following command: ```python manager.py <decoder_type> <test_type> ['plot']```
 
-Decoder Types: 1 = MWPM, 2 = Union Find, 3 = Tensor Network, 4 = Neural Network
-Test Types: 1 = Correctness, 2 = Latency, 3 = Threshold, 4 = Robustness, 5 = Scalability
-Optional flag: 'plot' - only generates plot for specified test
+- ```<decoder_type>```: 1 = MWPM, 2 = Union Find, 3 = Tensor Network, 4 = Neural Network
+
+- ```<test_type>```: 1 = Correctness, 2 = Latency, 3 = Threshold, 4 = Robustness, 5 = Scalability
+
+- Optional flag ```plot```:  only generates plot for specified test
 
 ## Motivation
 
