@@ -3,12 +3,6 @@ import numpy as np
 import time
 import json
 import stim
-
-from panqec.codes.surface_2d import RotatedPlanar2DCode
-from panqec.error_models import PauliErrorModel
-from panqec.decoders import UnionFindDecoder
-from panqec.simulation import DirectSimulation
-
 import pymatching
 
 
@@ -20,90 +14,159 @@ import pymatching
 dist = 5
 per = 0.001     # 1/1000
 synd_rounds = 5
-shots = 1000
+shots = 100000
 
+
+# ----------------------------------------
+#       CUSTOM UNION-FIND DECODER
+# ----------------------------------------
+
+class UnionFindDecoder:
+    def __init__(self, dem):
+        """
+        dem: stim.DetectorErrorModel
+        """
+        self.dem = dem
+        self.num_detectors = dem.num_detectors
+
+        # Build graph from DEM
+        self.edges = self._extract_edges(dem)
+
+    def _extract_edges(self, dem):
+        """
+        Extract edges: (detector1, detector2) or boundary edges
+        """
+        edges = []
+        for inst in dem:
+            if inst.type == "error":
+                dets = [t.val for t in inst.targets if t.is_relative_detector_id()]
+                
+                if len(dets) == 2:
+                    edges.append((dets[0], dets[1]))
+                elif len(dets) == 1:
+                    # boundary edge
+                    edges.append((dets[0], None))
+        return edges
+
+    def decode(self, syndrome):
+        """
+        syndrome: binary array of detector outcomes
+        """
+        syndrome = np.array(syndrome, dtype=np.uint8)
+
+        # Initialize clusters
+        parent = np.arange(self.num_detectors)
+        size = np.ones(self.num_detectors)
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a, b):
+            ra, rb = find(a), find(b)
+            if ra == rb:
+                return
+            if size[ra] < size[rb]:
+                ra, rb = rb, ra
+            parent[rb] = ra
+            size[ra] += size[rb]
+
+        # Step 1: initialize clusters on syndrome nodes
+        active = np.where(syndrome == 1)[0]
+
+        # Step 2: grow clusters (VERY simplified version)
+        for u, v in self.edges:
+            if v is None:
+                continue
+            if syndrome[u] and syndrome[v]:
+                union(u, v)
+
+        # Step 3: identify clusters (placeholder)
+        clusters = {}
+        for i in active:
+            root = find(i)
+            clusters.setdefault(root, []).append(i)
+
+        # Step 4: return correction (stub for now)
+        return self._clusters_to_correction(clusters)
+
+    def _clusters_to_correction(self, clusters):
+        """
+        Convert clusters into corrections.
+        (placeholder – will implement peeling next)
+        """
+        return clusters
 
 
 # --------------------------------------------------------
 #       CIRCUIT CONSTRUCTION / SIMULATION FUNCTIONS
 # --------------------------------------------------------
 
-def run_UF_simulation():
-    for dist in range(3,10,2):
-        surface_code = RotatedPlanar2DCode(dist)
-        error_model = PauliErrorModel(r_x=1/3, r_y=1/3, r_z=1/3)
-        decoder = UnionFindDecoder(surface_code, error_model, per)
-        sim = DirectSimulation(code=surface_code, error_model=error_model, decoder=decoder, error_rate=per)
+# Creates surface code circuit
+def surface_code(distance, rounds, phys_error_rate, depolarization = 0, measure = 0, reset = 0):
+    sc = stim.Circuit.generated(
+        "surface_code:rotated_memory_x",
+        distance=distance,
+        rounds=rounds,
+        after_clifford_depolarization=phys_error_rate,
+        before_round_data_depolarization=phys_error_rate*depolarization,
+        before_measure_flip_probability=phys_error_rate*measure,
+        after_reset_flip_probability=phys_error_rate*reset
+    )
+    return sc
 
-        fails = 0
-        latencies = []
+# Creates decoding graph for pymatching
+def decoder(surface_code):
+    error_model = surface_code.detector_error_model(decompose_errors=True)
+    matching = pymatching.Matching.from_detector_error_model(error_model)
+    return matching
 
-        for i in range(1):
-            start = time.perf_counter()
-            sim.run(100)
-            end = time.perf_counter()
-
-            latencies.append(end - start)
-        
-        log_error_rate = fails/shots
-        avg_latency = np.mean(latencies)
-
-        print(f"Distance: {dist}, Physical Error Rate: {per}")
-        print(f"Logical Error Rate: {log_error_rate}")
-        print(f"Average Decoding Latency: {avg_latency}\n")
-
-
-
-def test_sim():
-    for dist in range(3, 10, 2):
-        # Build the Stim rotated surface code circuit
-        circuit = stim.Circuit.generated(
-            "surface_code:rotated_memory_x",
-            distance=dist,
-            rounds=1,
-            after_clifford_depolarization=per
-        )
-
-        #surface_code = RotatedPlanar2DCode(dist)
-        error_model = PauliErrorModel(r_x=1/3, r_y=1/3, r_z=1/3)
-        decoder = UnionFindDecoder(circuit, error_model, per)
-
-        # Compile Stim sampler for detector outputs
-        sampler = circuit.compile_detector_sampler()
-
-        fails = 0
-        latencies = []
-
-        for _ in range(shots):
-            # Sample one set of detector events
-            detector_array = sampler.sample(shots=1)[0]
-            syndrome_bool = detector_array.astype(bool)
-
-            # --- Decode and measure latency ---
-            start = time.perf_counter()
-            correction = decoder.decode(syndrome_bool)  # Union-Find decode method
-            end = time.perf_counter()
-            latencies.append(end - start)
-
-            # Check if a logical error occurred
-            logical_failed = decoder.check_logical_error(correction)  # your method
-            if logical_failed:
-                fails += 1
-
-        log_error_rate = fails / shots
-        avg_latency_ms = np.mean(latencies) * 1000
-
-        print(f"Distance: {dist}, Physical Error Rate: {per}")
-        print(f"Logical Error Rate: {log_error_rate}")
-        print(f"Average Decoding Latency: {avg_latency_ms:.3f} ms\n")
+# Generates sample error syndrome
+def run_simulations(surface_code, shots):
+    samples = surface_code.compile_detector_sampler()
+    return samples.sample(shots=shots, separate_observables=True)
 
 
 # ---------------------------
 #       TEST FUNCTIONS
 # ---------------------------
 
-def correctness():
-    pass
+def correctness(depolarization = 0, measure = 0, reset = 0):
+    results = []
+    for i in range(1,21): # 0.0005 - 0.01
+        per = 5*i/10000
+        code = surface_code(dist, synd_rounds, per, depolarization, measure, reset)
+        dc = decoder(code)
+        detections, observed_flips = run_simulations(code, shots)
+
+        predictions = dc.decode_batch(detections)
+        errors = np.any(detections != 0, axis=1)
+
+        fails = 0
+        total = 0
+        for i in range(shots):
+            if errors[i]:
+                total += 1
+                if not np.array_equal(predictions[i], observed_flips[i]):
+                    fails += 1
+        
+        cond_error_rate = 0
+        if total != 0:
+            cond_error_rate = fails / total
+
+        results.append({
+            "physical_error_rate": per,
+            "conditional_error_rate": cond_error_rate
+        })
+
+        print()
+        print(f"Physical Error Rate: {per}")
+        print(f"Conditional Error Rate: {cond_error_rate:.8f}")
+        print()
+
+    return results
 
 def latency():
     pass
