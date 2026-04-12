@@ -3,6 +3,7 @@ import sys
 import mwpm
 import union_find
 import tensor
+import neural
 
 import create_correctness_plot
 import create_latency_plot
@@ -38,7 +39,7 @@ def main():
         if (decoder_type == 3):
             tensor.tensor_test(test_type)
         if (decoder_type == 4):
-            return
+            neural.neural_test(test_type)
     
     if (test_type == 1):
         create_correctness_plot.generate_plot(decoder_type)

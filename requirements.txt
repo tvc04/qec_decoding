@@ -8,3 +8,5 @@ cudaq-qec[tensor-network-decoder]
 beliefmatching
 optuna
 nevergrad
+torch
+os
