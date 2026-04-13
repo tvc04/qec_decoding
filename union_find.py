@@ -3,7 +3,7 @@ import numpy as np
 import time
 import json
 import stim
-import pymatching
+from collections import defaultdict, deque
 
 
 # -----------------------------
@@ -14,7 +14,7 @@ import pymatching
 dist = 5
 per = 0.001     # 1/1000
 synd_rounds = 5
-shots = 100000
+shots = 10
 
 
 # ----------------------------------------
@@ -23,81 +23,235 @@ shots = 100000
 
 class UnionFindDecoder:
     def __init__(self, dem):
-        """
-        dem: stim.DetectorErrorModel
-        """
         self.dem = dem
         self.num_detectors = dem.num_detectors
 
-        # Build graph from DEM
+        # Graph
         self.edges = self._extract_edges(dem)
+        self.adj = self._build_adj_list(self.edges)
 
+    # -------------------------
+    # DEM parsing
+    # -------------------------
     def _extract_edges(self, dem):
-        """
-        Extract edges: (detector1, detector2) or boundary edges
-        """
         edges = []
         for inst in dem:
-            if inst.type == "error":
-                dets = [t.val for t in inst.targets if t.is_relative_detector_id()]
-                
-                if len(dets) == 2:
-                    edges.append((dets[0], dets[1]))
-                elif len(dets) == 1:
-                    # boundary edge
-                    edges.append((dets[0], None))
+            if inst.type != "error":
+                continue
+
+            targets = inst.targets_copy()
+            dets = [t.val for t in targets if t.is_relative_detector_id()]
+
+            if len(dets) == 2:
+                edges.append((dets[0], dets[1]))
+            elif len(dets) == 1:
+                edges.append((dets[0], None))  # boundary
+
         return edges
 
+    def _build_adj_list(self, edges):
+        adj = defaultdict(list)
+        for u, v in edges:
+            if v is not None:
+                adj[u].append(v)
+                adj[v].append(u)
+        return adj
+
+    # -------------------------
+    # Union-Find
+    # -------------------------
+    def _find(self, x):
+        while self.parent[x] != x:
+            self.parent[x] = self.parent[self.parent[x]]
+            x = self.parent[x]
+        return x
+
+    def _union(self, a, b):
+        ra, rb = self._find(a), self._find(b)
+        if ra == rb:
+            return ra
+
+        if self.size[ra] < self.size[rb]:
+            ra, rb = rb, ra
+
+        self.parent[rb] = ra
+        self.size[ra] += self.size[rb]
+
+        self.parity[ra] ^= self.parity[rb]
+        self.boundary[ra] |= self.boundary[rb]
+
+        return ra
+
+    # -------------------------
+    # Decode
+    # -------------------------
     def decode(self, syndrome):
-        """
-        syndrome: binary array of detector outcomes
-        """
         syndrome = np.array(syndrome, dtype=np.uint8)
 
-        # Initialize clusters
-        parent = np.arange(self.num_detectors)
-        size = np.ones(self.num_detectors)
+        # --- initialize UF ---
+        self.parent = np.arange(self.num_detectors)
+        self.size = np.ones(self.num_detectors)
+        self.parity = syndrome.copy()
+        self.boundary = np.zeros(self.num_detectors, dtype=bool)
 
-        def find(x):
-            while parent[x] != x:
-                parent[x] = parent[parent[x]]
-                x = parent[x]
-            return x
-
-        def union(a, b):
-            ra, rb = find(a), find(b)
-            if ra == rb:
-                return
-            if size[ra] < size[rb]:
-                ra, rb = rb, ra
-            parent[rb] = ra
-            size[ra] += size[rb]
-
-        # Step 1: initialize clusters on syndrome nodes
-        active = np.where(syndrome == 1)[0]
-
-        # Step 2: grow clusters (VERY simplified version)
+        # boundary nodes
         for u, v in self.edges:
             if v is None:
-                continue
-            if syndrome[u] and syndrome[v]:
-                union(u, v)
+                self.boundary[u] = True
 
-        # Step 3: identify clusters (placeholder)
-        clusters = {}
-        for i in active:
-            root = find(i)
-            clusters.setdefault(root, []).append(i)
+        # -------------------------
+        # TRUE UF GROWTH
+        # -------------------------
+        frontier = {i: set() for i in range(self.num_detectors)}
+        active_roots = set()
 
-        # Step 4: return correction (stub for now)
-        return self._clusters_to_correction(clusters)
+        # initialize frontier
+        for i in np.where(syndrome == 1)[0]:
+            r = self._find(i)
+            active_roots.add(r)
+            for nb in self.adj[i]:
+                frontier[r].add(tuple(sorted((i, nb))))
 
-    def _clusters_to_correction(self, clusters):
-        """
-        Convert clusters into corrections.
-        (placeholder – will implement peeling next)
-        """
-        return clusters
+        grown_edges = set()
+
+        max_iters = 10000
+        iters = 0
+
+        while active_roots:
+            iters += 1
+            if iters > max_iters:
+                raise RuntimeError("UF growth did not terminate")
+
+            if not any(self.parity[self._find(r)] == 1 for r in active_roots):
+                break
+            
+            new_frontier = {}
+
+            for r in list(active_roots):
+                r = self._find(r)
+
+                if self.parity[r] == 0:
+                    continue
+                
+                for edge in frontier.get(r, []):
+                    if edge in grown_edges:
+                        continue
+                    
+                    grown_edges.add(edge)
+                    u, v = edge
+
+                    ru, rv = self._find(u), self._find(v)
+
+                    if ru != rv:
+                        new_root = self._union(ru, rv)
+
+                        frontier[new_root] = (
+                            frontier.get(ru, set()) |
+                            frontier.get(rv, set())
+                        )
+
+                        active_roots.discard(ru)
+                        active_roots.discard(rv)
+
+                        if self.parity[new_root] == 1:
+                            active_roots.add(new_root)
+
+                    # controlled expansion
+                    for node in (u, v):
+                        rnode = self._find(node)
+                        for nb in self.adj[node]:
+                            new_edge = tuple(sorted((node, nb)))
+                            if new_edge not in grown_edges:
+                                new_frontier.setdefault(rnode, set()).add(new_edge)
+
+            # 🔥 CRITICAL FIX: replace, don't accumulate
+            frontier = new_frontier
+
+            active_roots = {
+                self._find(r)
+                for r in active_roots
+                if self.parity[self._find(r)] == 1
+            }
+            
+        # -------------------------
+        # BUILD CLUSTERS
+        # -------------------------
+        clusters = defaultdict(list)
+        for i in np.where(syndrome == 1)[0]:
+            root = self._find(i)
+            clusters[root].append(i)
+
+        # -------------------------
+        # PEELING
+        # -------------------------
+        return self._peeling(clusters)
+
+    # -------------------------
+    # Peeling (correct)
+    # -------------------------
+    def _peeling(self, clusters):
+        correction = []
+
+        for root, nodes in clusters.items():
+            # build spanning tree
+            tree_parent = {}
+            tree_children = defaultdict(list)
+            visited = set()
+
+            start = nodes[0]
+            queue = deque([start])
+            visited.add(start)
+
+            while queue:
+                u = queue.popleft()
+                for v in self.adj[u]:
+                    if v not in visited:
+                        visited.add(v)
+                        tree_parent[v] = u
+                        tree_children[u].append(v)
+                        queue.append(v)
+
+            # parity init
+            parity = {n: 1 for n in nodes}
+            for n in visited:
+                parity.setdefault(n, 0)
+
+            # degree
+            degree = {}
+            for n in visited:
+                deg = len(tree_children[n])
+                if n in tree_parent:
+                    deg += 1
+                degree[n] = deg
+
+            # leaf queue
+            leaf_queue = deque([n for n in visited if degree[n] == 1])
+
+            # iterative peeling
+            while leaf_queue:
+                leaf = leaf_queue.popleft()
+
+                if degree[leaf] == 0:
+                    continue
+
+                parent = tree_parent.get(leaf)
+
+                if parity[leaf] == 1 and parent is not None:
+                    correction.append((leaf, parent))
+                    parity[parent] ^= 1
+
+                degree[leaf] = 0
+
+                if parent is not None:
+                    degree[parent] -= 1
+
+                    if leaf in tree_children[parent]:
+                        tree_children[parent].remove(leaf)
+
+                    if degree[parent] == 1:
+                        leaf_queue.append(parent)
+
+        return correction
 
 
 # --------------------------------------------------------
@@ -120,8 +274,7 @@ def surface_code(distance, rounds, phys_error_rate, depolarization = 0, measure 
 # Creates decoding graph for pymatching
 def decoder(surface_code):
     error_model = surface_code.detector_error_model(decompose_errors=True)
-    matching = pymatching.Matching.from_detector_error_model(error_model)
-    return matching
+    return UnionFindDecoder(error_model)
 
 # Generates sample error syndrome
 def run_simulations(surface_code, shots):
@@ -141,7 +294,11 @@ def correctness(depolarization = 0, measure = 0, reset = 0):
         dc = decoder(code)
         detections, observed_flips = run_simulations(code, shots)
 
-        predictions = dc.decode_batch(detections)
+        predictions = []
+        for shot in detections:
+            result = dc.decode(shot)
+            predictions.append(result)
+        
         errors = np.any(detections != 0, axis=1)
 
         fails = 0

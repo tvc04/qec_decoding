@@ -14,10 +14,10 @@ import os
 # Default values (changed in tests)
 dist = 5
 per = 0.001     # 1/1000
-synd_rounds = 5
-shots = 10000
-epochs = 15
-batch_size = 1024
+synd_rounds = 5 # 1
+shots = 1000    # 10,000
+epochs = 8      # 15
+batch_size = 128   #1024
 nn_dir = "nn_models"
 error_rates = [5*i/100000 for i in range(1,41)] # 0.00005 - 0.002
 
@@ -33,7 +33,7 @@ def generate_data(distance, shots, phys_error_rate, depolarization = 0, measure 
     circuit = stim.Circuit.generated(
         "surface_code:rotated_memory_x",
         distance=distance,
-        rounds=1,
+        rounds=synd_rounds,
         after_clifford_depolarization=phys_error_rate,
         before_round_data_depolarization=phys_error_rate*depolarization,
         before_measure_flip_probability=phys_error_rate*measure,

@@ -17,7 +17,7 @@ dist = 5
 per = 0.001     # 1/1000
 synd_rounds = 5
 shots = 1000000
-error_rates = [5*i/100000 for i in range(1,41)] # 0.00005 - 0.001
+error_rates = [5*i/100000 for i in range(1,41)] # 0.00005 - 0.002
 nn_dir = "nn_models"
 
 
@@ -44,7 +44,7 @@ def generate_data(distance, shots, p):
     circuit = stim.Circuit.generated(
         "surface_code:rotated_memory_x",
         distance=distance,
-        rounds=1,
+        rounds=synd_rounds,
         after_clifford_depolarization=p
     )
 
