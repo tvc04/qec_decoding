@@ -22,13 +22,15 @@ shots = 10
 # ----------------------------------------
 
 class UnionFindDecoder:
-    def __init__(self, dem):
+    def __init__(self, dem, debug=False):
         self.dem = dem
         self.num_detectors = dem.num_detectors
+        self.debug = debug
 
         # Graph
         self.edges = self._extract_edges(dem)
         self.adj = self._build_adj_list(self.edges)
+        self.observable_map = self._extract_observables(dem)
 
     # -------------------------
     # DEM parsing
@@ -56,6 +58,37 @@ class UnionFindDecoder:
                 adj[u].append(v)
                 adj[v].append(u)
         return adj
+
+    def _extract_observables(self, dem):
+        obs_map = []
+
+        for inst in dem:
+            if inst.type != "error":
+                continue
+
+            targets = inst.targets_copy()
+
+            dets = [t.val for t in targets if t.is_relative_detector_id()]
+            obs = [t.val for t in targets if t.is_logical_observable_id()]
+
+            if len(obs) > 0:
+                obs_map.append((tuple(dets), tuple(obs)))
+
+        return obs_map
+
+    def predict_logicals(self, correction_edges):
+        logicals = set()
+
+        edge_set = {tuple(sorted(e)) for e in correction_edges}
+
+        for dets, obs in self.observable_map:
+            if len(dets) == 2:
+                edge = tuple(sorted(dets))
+                if edge in edge_set:
+                    for o in obs:
+                        logicals.add(o)
+
+        return logicals
 
     # -------------------------
     # Union-Find
@@ -85,6 +118,10 @@ class UnionFindDecoder:
     # -------------------------
     # Decode
     # -------------------------
+    def _log(self, msg):
+        if self.debug:
+            print(msg)
+
     def decode(self, syndrome):
         syndrome = np.array(syndrome, dtype=np.uint8)
 
@@ -122,10 +159,33 @@ class UnionFindDecoder:
             if iters > max_iters:
                 raise RuntimeError("UF growth did not terminate")
 
-            if not any(self.parity[self._find(r)] == 1 for r in active_roots):
+            # --- compute stats ---
+            roots = {self._find(r) for r in active_roots}
+            cluster_sizes = {r: 0 for r in roots}
+
+            for i in range(self.num_detectors):
+                ri = self._find(i)
+                if ri in cluster_sizes:
+                    cluster_sizes[ri] += 1
+
+            if self.debug and iters % 10 == 0:
+                self._log(f"\n[Growth Iter {iters}]")
+                self._log(f"Active clusters: {len(roots)}")
+                self._log(f"Cluster sizes: {list(cluster_sizes.values())[:10]}...")
+                self._log(f"Frontier edges: {sum(len(frontier.get(r, [])) for r in roots)}")
+
+            # --- stopping condition ---
+            def is_active(root):
+                root = self._find(root)
+                return self.parity[root] == 1 and not self.boundary[root]
+
+            if not any(is_active(r) for r in active_roots):
+                self._log("All clusters resolved (even or boundary) → stopping growth")
                 break
             
             new_frontier = {}
+            merges_this_round = 0
+            edges_processed = 0
 
             for r in list(active_roots):
                 r = self._find(r)
@@ -138,12 +198,14 @@ class UnionFindDecoder:
                         continue
                     
                     grown_edges.add(edge)
-                    u, v = edge
+                    edges_processed += 1
 
+                    u, v = edge
                     ru, rv = self._find(u), self._find(v)
 
                     if ru != rv:
                         new_root = self._union(ru, rv)
+                        merges_this_round += 1
 
                         frontier[new_root] = (
                             frontier.get(ru, set()) |
@@ -164,13 +226,19 @@ class UnionFindDecoder:
                             if new_edge not in grown_edges:
                                 new_frontier.setdefault(rnode, set()).add(new_edge)
 
-            # 🔥 CRITICAL FIX: replace, don't accumulate
+            # --- log per-iteration activity ---
+            if self.debug:
+                self._log(f"Edges processed: {edges_processed}")
+                self._log(f"Merges this round: {merges_this_round}")
+
+            # update frontier
             frontier = new_frontier
 
+            # filter active roots
             active_roots = {
                 self._find(r)
                 for r in active_roots
-                if self.parity[self._find(r)] == 1
+                if self.parity[self._find(r)] == 1 and not self.boundary[self._find(r)]
             }
             
         # -------------------------
@@ -274,7 +342,7 @@ def surface_code(distance, rounds, phys_error_rate, depolarization = 0, measure 
 # Creates decoding graph for pymatching
 def decoder(surface_code):
     error_model = surface_code.detector_error_model(decompose_errors=True)
-    return UnionFindDecoder(error_model)
+    return UnionFindDecoder(error_model, False)
 
 # Generates sample error syndrome
 def run_simulations(surface_code, shots):
@@ -297,7 +365,7 @@ def correctness(depolarization = 0, measure = 0, reset = 0):
         predictions = []
         for shot in detections:
             result = dc.decode(shot)
-            predictions.append(result)
+            predictions.append(dc.predict_logicals(result))
         
         errors = np.any(detections != 0, axis=1)
 
