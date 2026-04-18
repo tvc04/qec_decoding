@@ -2,6 +2,7 @@ import sys
 import numpy as np
 import time
 import json
+import math
 import stim
 from collections import defaultdict, deque
 
@@ -14,7 +15,7 @@ from collections import defaultdict, deque
 dist = 5
 per = 0.001     # 1/1000
 synd_rounds = 5
-shots = 10
+shots = 1000
 
 
 # ----------------------------------------
@@ -37,26 +38,33 @@ class UnionFindDecoder:
     # -------------------------
     def _extract_edges(self, dem):
         edges = []
+
         for inst in dem:
             if inst.type != "error":
                 continue
+
+            p = inst.args_copy()[0]  # error probability
 
             targets = inst.targets_copy()
             dets = [t.val for t in targets if t.is_relative_detector_id()]
 
             if len(dets) == 2:
-                edges.append((dets[0], dets[1]))
+                edges.append((dets[0], dets[1], p))
             elif len(dets) == 1:
-                edges.append((dets[0], None))  # boundary
+                edges.append((dets[0], None, p))
 
         return edges
 
     def _build_adj_list(self, edges):
         adj = defaultdict(list)
-        for u, v in edges:
+
+        for u, v, p in edges:
+            w = -math.log(p) if p > 0 else 100  # avoid log(0)
+
             if v is not None:
-                adj[u].append(v)
-                adj[v].append(u)
+                adj[u].append((v, w))
+                adj[v].append((u, w))
+
         return adj
 
     def _extract_observables(self, dem):
@@ -77,18 +85,43 @@ class UnionFindDecoder:
         return obs_map
 
     def predict_logicals(self, correction_edges):
-        logicals = set()
+        # number of logical observables
+        num_obs = 0
+        for _, obs in self.observable_map:
+            for o in obs:
+                num_obs = max(num_obs, o + 1)
 
-        edge_set = {tuple(sorted(e)) for e in correction_edges}
+        pred = np.zeros(num_obs, dtype=np.uint8)
 
+        # normalize correction edges
+        correction_set = {tuple(sorted(e)) for e in correction_edges}
+
+        # ----------------------------------------------------
+        # CORRECT INTERPRETATION:
+        # use DEM mapping: (detectors → observables)
+        # ----------------------------------------------------
         for dets, obs in self.observable_map:
-            if len(dets) == 2:
-                edge = tuple(sorted(dets))
-                if edge in edge_set:
-                    for o in obs:
-                        logicals.add(o)
 
-        return logicals
+            # Stim DEM entries may have 1 or more detectors
+            affected = False
+
+            if len(dets) == 0:
+                continue
+
+            elif len(dets) == 1:
+                # single-detector events still matter
+                affected = True
+
+            else:
+                edge = tuple(sorted(dets))
+                if edge in correction_set:
+                    affected = True
+
+            if affected:
+                for o in obs:
+                    pred[o] ^= 1  # parity accumulation
+
+        return pred
 
     # -------------------------
     # Union-Find
@@ -121,6 +154,13 @@ class UnionFindDecoder:
     def _log(self, msg):
         if self.debug:
             print(msg)
+    
+    def _edge_weight(self, edge):
+        u, v = edge
+        for nb, w in self.adj[u]:
+            if nb == v:
+                return w
+        return 0
 
     def decode(self, syndrome):
         syndrome = np.array(syndrome, dtype=np.uint8)
@@ -132,85 +172,82 @@ class UnionFindDecoder:
         self.boundary = np.zeros(self.num_detectors, dtype=bool)
 
         # boundary nodes
-        for u, v in self.edges:
+        for u, v, _ in self.edges:
             if v is None:
                 self.boundary[u] = True
 
-        # -------------------------
-        # TRUE UF GROWTH
-        # -------------------------
-        frontier = {i: set() for i in range(self.num_detectors)}
+        # ------------------------------------
+        # UF CLUSTER DATA STRUCTURES
+        # ------------------------------------
+        frontier = {}
+        cluster_edges = defaultdict(set)   # ✅ IMPORTANT: UF-grown edges per cluster
         active_roots = set()
+        grown_edges = set()
 
-        # initialize frontier
+        # initialize clusters
         for i in np.where(syndrome == 1)[0]:
             r = self._find(i)
             active_roots.add(r)
-            for nb in self.adj[i]:
-                frontier[r].add(tuple(sorted((i, nb))))
 
-        grown_edges = set()
+            frontier[r] = set()
+            for nb, _ in self.adj[i]:
+                e = tuple(sorted((i, nb)))
+                frontier[r].add(e)
 
         max_iters = 10000
         iters = 0
 
+        # ------------------------------------
+        # UF GROWTH (LAYERED)
+        # ------------------------------------
         while active_roots:
             iters += 1
             if iters > max_iters:
                 raise RuntimeError("UF growth did not terminate")
 
-            # --- compute stats ---
-            roots = {self._find(r) for r in active_roots}
-            cluster_sizes = {r: 0 for r in roots}
-
-            for i in range(self.num_detectors):
-                ri = self._find(i)
-                if ri in cluster_sizes:
-                    cluster_sizes[ri] += 1
-
-            if self.debug and iters % 10 == 0:
-                self._log(f"\n[Growth Iter {iters}]")
-                self._log(f"Active clusters: {len(roots)}")
-                self._log(f"Cluster sizes: {list(cluster_sizes.values())[:10]}...")
-                self._log(f"Frontier edges: {sum(len(frontier.get(r, [])) for r in roots)}")
-
-            # --- stopping condition ---
-            def is_active(root):
-                root = self._find(root)
-                return self.parity[root] == 1 and not self.boundary[root]
+            def is_active(r):
+                r = self._find(r)
+                return self.parity[r] == 1 and not self.boundary[r]
 
             if not any(is_active(r) for r in active_roots):
-                self._log("All clusters resolved (even or boundary) → stopping growth")
                 break
-            
-            new_frontier = {}
+
+            current_frontier = frontier
+            next_frontier = {}
             merges_this_round = 0
-            edges_processed = 0
 
             for r in list(active_roots):
                 r = self._find(r)
 
                 if self.parity[r] == 0:
                     continue
-                
-                for edge in frontier.get(r, []):
+
+                for edge in current_frontier.get(r, set()):
                     if edge in grown_edges:
                         continue
-                    
+
                     grown_edges.add(edge)
-                    edges_processed += 1
 
                     u, v = edge
                     ru, rv = self._find(u), self._find(v)
 
+                    # ------------------------------------
+                    # UNION
+                    # ------------------------------------
                     if ru != rv:
                         new_root = self._union(ru, rv)
                         merges_this_round += 1
 
-                        frontier[new_root] = (
-                            frontier.get(ru, set()) |
-                            frontier.get(rv, set())
-                        )
+                        # ------------------------------------
+                        # MERGE CLUSTER EDGES (CRITICAL FIX)
+                        # ------------------------------------
+                        cluster_edges[new_root] |= cluster_edges[ru]
+                        cluster_edges[new_root] |= cluster_edges[rv]
+                        cluster_edges[new_root].add(edge)
+
+                        # merge frontiers
+                        merged = current_frontier.get(ru, set()) | current_frontier.get(rv, set())
+                        next_frontier[new_root] = merged
 
                         active_roots.discard(ru)
                         active_roots.discard(rv)
@@ -218,40 +255,41 @@ class UnionFindDecoder:
                         if self.parity[new_root] == 1:
                             active_roots.add(new_root)
 
-                    # controlled expansion
+                    # ------------------------------------
+                    # EXPAND (NEXT LAYER ONLY)
+                    # ------------------------------------
                     for node in (u, v):
                         rnode = self._find(node)
-                        for nb in self.adj[node]:
+                        for nb, _ in self.adj[node]:
                             new_edge = tuple(sorted((node, nb)))
                             if new_edge not in grown_edges:
-                                new_frontier.setdefault(rnode, set()).add(new_edge)
+                                next_frontier.setdefault(rnode, set()).add(new_edge)
 
-            # --- log per-iteration activity ---
-            if self.debug:
-                self._log(f"Edges processed: {edges_processed}")
-                self._log(f"Merges this round: {merges_this_round}")
+                                # IMPORTANT: track UF-grown structure
+                                cluster_edges[rnode].add(new_edge)
 
-            # update frontier
-            frontier = new_frontier
+            frontier = next_frontier
 
-            # filter active roots
             active_roots = {
                 self._find(r)
                 for r in active_roots
                 if self.parity[self._find(r)] == 1 and not self.boundary[self._find(r)]
             }
-            
-        # -------------------------
+
+        # ------------------------------------
         # BUILD CLUSTERS
-        # -------------------------
+        # ------------------------------------
         clusters = defaultdict(list)
         for i in np.where(syndrome == 1)[0]:
             root = self._find(i)
             clusters[root].append(i)
 
-        # -------------------------
+        # attach cluster edges for peeling
+        self.cluster_edges = cluster_edges
+
+        # ------------------------------------
         # PEELING
-        # -------------------------
+        # ------------------------------------
         return self._peeling(clusters)
 
     # -------------------------
@@ -261,63 +299,73 @@ class UnionFindDecoder:
         correction = []
 
         for root, nodes in clusters.items():
-            # build spanning tree
-            tree_parent = {}
-            tree_children = defaultdict(list)
-            visited = set()
+            nodes_set = set(nodes)
 
-            start = nodes[0]
-            queue = deque([start])
-            visited.add(start)
+            # ----------------------------------------
+            # BUILD FOREST FROM UF GROWN EDGES ONLY
+            # ----------------------------------------
+            edges = self.cluster_edges[root] if root in self.cluster_edges else set()
 
-            while queue:
-                u = queue.popleft()
-                for v in self.adj[u]:
-                    if v not in visited:
-                        visited.add(v)
-                        tree_parent[v] = u
-                        tree_children[u].append(v)
-                        queue.append(v)
+            tree = defaultdict(list)
+            degree = defaultdict(int)
 
-            # parity init
-            parity = {n: 1 for n in nodes}
-            for n in visited:
-                parity.setdefault(n, 0)
+            # build tree from UF-accepted edges only
+            for u, v in edges:
+                tree[u].append(v)
+                tree[v].append(u)
 
-            # degree
-            degree = {}
-            for n in visited:
-                deg = len(tree_children[n])
-                if n in tree_parent:
-                    deg += 1
-                degree[n] = deg
+            for n in nodes_set:
+                degree[n] = len(tree[n])
 
-            # leaf queue
-            leaf_queue = deque([n for n in visited if degree[n] == 1])
+            # ----------------------------------------
+            # OPTIONAL: boundary handling
+            # ----------------------------------------
+            touches_boundary = any(self.boundary[n] for n in nodes_set)
 
-            # iterative peeling
+            BOUNDARY = -1
+            if touches_boundary:
+                # attach one arbitrary node to boundary
+                start = next(iter(nodes_set))
+                tree[start].append(BOUNDARY)
+                tree[BOUNDARY].append(start)
+                degree[BOUNDARY] = 1
+                nodes_set.add(BOUNDARY)
+
+            # ----------------------------------------
+            # INITIALIZE PARITY
+            # ----------------------------------------
+            parity = {n: 0 for n in nodes_set}
+            for n in nodes_set:
+                if n != BOUNDARY:
+                    parity[n] = 1  # syndrome nodes are odd initially
+
+            # ----------------------------------------
+            # INITIAL LEAVES
+            # ----------------------------------------
+            leaf_queue = deque([n for n in nodes_set if len(tree[n]) == 1])
+
+            # ----------------------------------------
+            # PEELING PROCESS
+            # ----------------------------------------
             while leaf_queue:
                 leaf = leaf_queue.popleft()
 
-                if degree[leaf] == 0:
+                if len(tree[leaf]) == 0:
                     continue
 
-                parent = tree_parent.get(leaf)
+                for parent in tree[leaf]:
+                    if parity[leaf] == 1 and leaf != BOUNDARY and parent != BOUNDARY:
+                        correction.append((leaf, parent))
+                        parity[parent] ^= 1
 
-                if parity[leaf] == 1 and parent is not None:
-                    correction.append((leaf, parent))
-                    parity[parent] ^= 1
+                    # remove edge
+                    tree[parent].remove(leaf)
+                    tree[leaf].remove(parent)
 
-                degree[leaf] = 0
-
-                if parent is not None:
-                    degree[parent] -= 1
-
-                    if leaf in tree_children[parent]:
-                        tree_children[parent].remove(leaf)
-
-                    if degree[parent] == 1:
+                    if len(tree[parent]) == 1:
                         leaf_queue.append(parent)
+
+                tree[leaf] = []
 
         return correction
 
@@ -347,7 +395,7 @@ def decoder(surface_code):
 # Generates sample error syndrome
 def run_simulations(surface_code, shots):
     samples = surface_code.compile_detector_sampler()
-    return samples.sample(shots=shots, separate_observables=True)
+    return samples.sample(shots=shots, separate_observables=False)
 
 
 # ---------------------------
@@ -397,7 +445,45 @@ def latency():
     pass
 
 def threshold():
-    pass
+    results = {}
+    for dist in range(3,10,2):
+        results[f'{dist}'] = []
+        dist_results = []
+        for i in range(1,21): # 0.005 - 0.1
+            per = 5*i/1000
+            code = surface_code(dist, synd_rounds, per)
+            dc = decoder(code)
+            detections = run_simulations(code, shots)
+    
+            fails = 0
+
+            for shot in detections:
+                correction = dc.decode(shot)
+                predicted_logical = dc.predict_logicals(correction)
+
+                # -----------------------------------
+                # CORRECT FAILURE DEFINITION:
+                # logical error = ANY nontrivial logical flip
+                # (vector != 0)
+                # -----------------------------------
+                if np.sum(predicted_logical) % 2 == 1:
+                    fails += 1
+
+            log_error_rate = fails / shots
+
+            dist_results.append({
+                "physical_error_rate": per,
+                "logical_error_rate": log_error_rate
+            })
+
+            print()
+            print(f"Distance: {dist}, Physical Error Rate: {per}")
+            print(f"Logical Error Rate: {log_error_rate:.8f}")
+            print()
+
+        results[f'{dist}'].extend(dist_results)
+    
+    return results
 
 def robustness():
     pass
@@ -406,16 +492,28 @@ def scalability():
     pass
 
 def union_find_test(test_num):
+    results = []
+    output_file = ""
     if test_num == 1:
-        correctness()
+        results = correctness()
+        output_file = "results/union/results_correctness.json"
     if test_num == 2:
-        latency()
+        results = latency()
+        output_file = "results/union/results_latency.json"
     if test_num == 3:
-        threshold()
+        results = threshold()
+        output_file = "results/union/results_threshold.json"
     if test_num == 4:
-        robustness()
+        results = robustness()
+        output_file = "results/union/results_robustness.json"
     if test_num == 5:
-        scalability()
+        results = scalability()
+        output_file = "results/union/results_scalability.json"
+    
+    with open(output_file, "w") as f:
+        json.dump(results, f, indent=4)
+
+    print(f"Results saved to {output_file}")
 
 
 if __name__ == '__main__':
