@@ -2,7 +2,8 @@ numpy
 json
 stim
 pymatching
-panqec
+ldpc
+cudaq
 cudaq-qec
 cudaq-qec[tensor-network-decoder]
 beliefmatching
@@ -10,3 +11,5 @@ optuna
 nevergrad
 torch
 os
+sys
+time

@@ -14,10 +14,10 @@ import os
 # Default values (changed in tests)
 dist = 5
 per = 0.001     # 1/1000
-synd_rounds = 5 # 1
-shots = 1000    # 10,000
-epochs = 8      # 15
-batch_size = 128   #1024
+synd_rounds = 5
+shots = 1000
+epochs = 8
+batch_size = 128
 nn_dir = "nn_models"
 error_rates = [5*i/100000 for i in range(1,41)] # 0.00005 - 0.002
 
@@ -112,7 +112,6 @@ def make_model(depolarization = 0, measure = 0, reset = 0):
     for dist in range(3,10,2):
         print(f"\n=== Training for distance {dist} ===")
 
-        # Build dataset across multiple error rates
         x, y = build_dataset(dist, depolarization, measure, reset)
 
         input_size = x.shape[1]
@@ -120,11 +119,9 @@ def make_model(depolarization = 0, measure = 0, reset = 0):
 
         train_model(model, x, y)
 
-        # Save model
         model_path = os.path.join(nn_dir, f"decoder_{depolarization}{measure}{reset}_d{dist}.pt")
         torch.save(model.state_dict(), model_path)
 
-        # Save metadata
         metadata[f"{dist}"] = {
             "input_size": input_size,
             "error_rates": error_rates,

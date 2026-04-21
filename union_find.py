@@ -101,11 +101,10 @@ def correctness(depolarization = 0, measure = 0, reset = 0):
         predictions = np.asarray(predictions)
         observed_flips = np.asarray(observed_flips)
 
-        # shots where syndrome is nontrivial
         mask = np.any(observed_flips != 0, axis=1)
 
         if np.sum(mask) == 0:
-            return 0  # no errors occurred
+            return 0
 
         correct = np.all(predictions[mask] != observed_flips[mask], axis=1)
 
@@ -245,7 +244,7 @@ def union_find_test(test_num):
     
 
 if __name__ == '__main__':
-    if len(sys.argv) > 2 or int(sys.argv[1]) not in range(1,6):
+    if len(sys.argv) != 2 or int(sys.argv[1]) not in range(1,6):
         print("Specify Test Type (1=Correctness, 2=Latency, 3=Threshold, 4=Robustness, 5=Scalability)")
     else:
         test_type = int(sys.argv[1])

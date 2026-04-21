@@ -75,8 +75,6 @@ def nn_decode(model, syndromes):
 #       TEST FUNCTIONS
 # ---------------------------
 
-# Plot decoder's conditional correctness as per increases
-# Conditional correctness: prediction correctness in cases with errors
 def correctness(depolarization = 0, measure = 0, reset = 0):
     with open(os.path.join(nn_dir, "metadata.json"), "r") as f:
         metadata = json.load(f)
@@ -111,7 +109,6 @@ def correctness(depolarization = 0, measure = 0, reset = 0):
 
     return results
 
-# Plot decoding time as per increases later (distance is a part of scalability)
 def latency(distance = dist):
     with open(os.path.join(nn_dir, "metadata.json"), "r") as f:
         metadata = json.load(f)
@@ -145,7 +142,6 @@ def latency(distance = dist):
 
     return results
 
-# Plot logical error rate as distance increases
 def threshold():
     with open(os.path.join(nn_dir, "metadata.json"), "r") as f:
         metadata = json.load(f)
@@ -182,7 +178,6 @@ def threshold():
 
     return results
 
-# Include different error models and test correctness
 def robustness():
     results = {}
     print("\n--------- Control ---------\n")
@@ -208,7 +203,6 @@ def robustness():
 
     return results
 
-# Track qubit counts and decoding latency -> space time measurements
 def scalability():
     results = {}
     for dist in range(3,10,2):
@@ -217,6 +211,7 @@ def scalability():
         results[f'{dist}'].extend(dist_results)
     
     return results
+
 
 
 def neural_test(test_num):
@@ -245,7 +240,7 @@ def neural_test(test_num):
     
 
 if __name__ == '__main__':
-    if len(sys.argv) > 2 or int(sys.argv[1]) not in range(1,6):
+    if len(sys.argv) != 2 or int(sys.argv[1]) not in range(1,6):
         print("Specify Test Type (1=Correctness, 2=Latency, 3=Threshold, 4=Robustness, 5=Scalability)")
     else:
         test_type = int(sys.argv[1])

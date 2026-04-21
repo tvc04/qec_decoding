@@ -23,7 +23,6 @@ shots = 1000000
 #       CIRCUIT CONSTRUCTION / SIMULATION FUNCTIONS
 # --------------------------------------------------------
 
-# Create surface code circuit
 def surface_code(distance, rounds, phys_error_rate, depolarization = 0, measure = 0, reset = 0):
     sc = stim.Circuit.generated(
         "surface_code:rotated_memory_x",
@@ -36,7 +35,6 @@ def surface_code(distance, rounds, phys_error_rate, depolarization = 0, measure 
     )
     return sc
 
-# Makes error model usable for cudaq decoder
 def parse_detector_error_model(detector_error_model):
     matrices = detector_error_model_to_check_matrices(detector_error_model)
 
@@ -47,7 +45,6 @@ def parse_detector_error_model(detector_error_model):
 
     return out_H, out_L, [float(p) for p in matrices.priors]
 
-# Creates cudaq tensor network decoder
 def decoder(surface_code):
     detector_error_model = surface_code.detector_error_model(decompose_errors=True)
 
@@ -63,7 +60,6 @@ def decoder(surface_code):
 
     return decoder
 
-# Generates sample error syndrome measurments
 def run_simulations(surface_code, shots):
     samples = surface_code.compile_detector_sampler()
     return samples.sample(shots, separate_observables=True)
@@ -73,8 +69,6 @@ def run_simulations(surface_code, shots):
 #       TEST FUNCTIONS
 # ---------------------------
 
-# Plot decoder's conditional correctness as per increases
-# Conditional correctness: prediction correctness in cases with errors
 def correctness(depolarization = 0, measure = 0, reset = 0):
     results = []
     for i in range(1,21): # 0.0005 - 0.01
@@ -110,7 +104,6 @@ def correctness(depolarization = 0, measure = 0, reset = 0):
 
     return results
 
-# Plot decoding time as per increases later (distance is a part of scalability)
 def latency(distance = dist):
     results = []
     shots = 1000
@@ -144,7 +137,6 @@ def latency(distance = dist):
     
     return results
 
-# Plot logical error rate as distnace increases
 def threshold():
     results = {}
     shots = 100000
@@ -179,7 +171,6 @@ def threshold():
     
     return results
 
-# Include different error models and test correctness
 def robustness():
     results = {}
     print("\n--------- Control ---------\n")
@@ -205,7 +196,6 @@ def robustness():
 
     return results
 
-# Track qubit counts and decoding latency -> space time measurements
 def scalability():
     results = {}
     for dist in range(3,10,2):
@@ -243,7 +233,7 @@ def tensor_test(test_num):
     
 
 if __name__ == '__main__':
-    if len(sys.argv) > 2 or int(sys.argv[1]) not in range(1,6):
+    if len(sys.argv) != 2 or int(sys.argv[1]) not in range(1,6):
         print("Specify Test Type (1=Correctness, 2=Latency, 3=Threshold, 4=Robustness, 5=Scalability)")
     else:
         test_type = int(sys.argv[1])
