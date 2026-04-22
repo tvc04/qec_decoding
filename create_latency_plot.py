@@ -6,14 +6,29 @@ import matplotlib.pyplot as plt
 
 def generate_plot(decoder_type):
     decoder = ""
+    color = ""
+    marker = ''
+    title = ""
     if (decoder_type == 1):
         decoder = "mwpm"
+        color = "blue"
+        marker = 'o'
+        title = "MWPM"
     if (decoder_type == 2):
         decoder = "union"
+        color = "red"
+        marker = 's'
+        title = "Union-Find"
     if (decoder_type == 3):
         decoder = "tensor"
+        color = "green"
+        marker = '^'
+        title = "Tensor Network"
     if (decoder_type == 4):
         decoder = "neural"
+        color = "orange"
+        marker = '*'
+        title = "Neural Network"
 
     # Load JSON file
     with open(f"results/{decoder}/results_latency.json", "r") as f:
@@ -25,13 +40,13 @@ def generate_plot(decoder_type):
     physical, latency = zip(*sorted(zip(physical, latency)))
 
     plt.figure()
-    plt.plot(physical, latency, marker='o')
+    plt.plot(physical, latency, marker=marker, color=color)
 
     plt.xscale("log")
 
     plt.xlabel("Physical Error Rate")
     plt.ylabel("Average Decoding Latency (seconds)")
-    plt.title("Decoder Latency vs Physical Error Rate")
+    plt.title(f"Decoder Latency -- {title}")
     plt.grid(True)
 
     plt.show()

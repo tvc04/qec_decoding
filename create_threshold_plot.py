@@ -6,14 +6,19 @@ import matplotlib.pyplot as plt
 
 def generate_plot(decoder_type):
     decoder = ""
+    title = ""
     if (decoder_type == 1):
         decoder = "mwpm"
+        title = "MWPM"
     if (decoder_type == 2):
         decoder = "union"
+        title = "Union-Find"
     if (decoder_type == 3):
         decoder = "tensor"
+        title = "Tensor Network"
     if (decoder_type == 4):
         decoder = "neural"
+        title = "Neural Network"
 
     # Load JSON file
     with open(f"results/{decoder}/results_threshold.json", "r") as f:
@@ -55,7 +60,7 @@ def generate_plot(decoder_type):
 
     plt.xlabel("Physical Error Rate")
     plt.ylabel("Logical Error Rate")
-    plt.title("Threshold Plot (Surface Code)")
+    plt.title(f"Threshold Plot -- {title}")
     plt.legend()
     plt.grid(True)
 

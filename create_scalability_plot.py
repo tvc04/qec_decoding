@@ -6,14 +6,19 @@ import matplotlib.pyplot as plt
 
 def generate_plot(decoder_type):
     decoder = ""
+    title = ""
     if (decoder_type == 1):
         decoder = "mwpm"
+        title = "MWPM"
     if (decoder_type == 2):
         decoder = "union"
+        title = "Union-Find"
     if (decoder_type == 3):
         decoder = "tensor"
+        title = "Tensor Network"
     if (decoder_type == 4):
         decoder = "neural"
+        title = "Neural Network"
 
     # Load JSON file
     with open(f"results/{decoder}/results_scalability.json", "r") as f:
@@ -33,7 +38,7 @@ def generate_plot(decoder_type):
 
     plt.xlabel("Physical Error Rate")
     plt.ylabel("Average Decoding Latency (seconds)")
-    plt.title("Scalability Plot (Latency vs Physical Error Rate)")
+    plt.title(f"Scalability Plot -- {title}")
     plt.legend()
     plt.grid(True)
 
