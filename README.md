@@ -1,6 +1,6 @@
 # qec_decoding
 
-Repository for all things QEC Surface Code Decoding!
+Repository for all things QEC Surface Code Decoding! My research report can be found [here](./Benchmarking Quantum Error Correction Decoders on the Surface Code.pdf).
 
 ## How to Use
 
